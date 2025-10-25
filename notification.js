@@ -4,15 +4,16 @@
 // and sends FCM notifications when a task is nearing its due date.
 // ============================================================================
 
-import admin from "firebase-admin";
-import { differenceInMinutes, parseISO } from "date-fns";
 
-// Initialize Firebase Admin SDK using service account
-import serviceAccount from "./serviceAccountKey.json" assert { type: "json" };
+import { differenceInMinutes, parseISO } from "date-fns";
+import admin from "firebase-admin";
+
+const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
+
 
 const db = admin.firestore();
 const fcm = admin.messaging();
@@ -36,7 +37,7 @@ async function checkTasks() {
 
   try {
     // 🔹 Emails to target (you can add or remove any)
-const targetEmails = ["user1@example.com", "user2@example.com"];
+const targetEmails = ["poornima20suresh@gmail.com", "poornimasuresh18@gmail.com"];
 
 // 🔹 Fetch only those users whose email is in the target list
 const usersSnap = await db.collection("users")
