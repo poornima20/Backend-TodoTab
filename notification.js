@@ -1,99 +1,135 @@
 // ============================================================================
-// 🔹 notify.js
-// Description: Scheduled script that checks Firestore tasks for all users
-// and sends FCM notifications when a task is nearing its due date.
+// 🔹 notification.js
+// Sends notifications using tokens from /users/{uid}/devices/{deviceId}/token
 // ============================================================================
 
-
-import { differenceInMinutes, parseISO } from "date-fns";
+import { parseISO, differenceInMinutes } from "date-fns";
 import admin from "firebase-admin";
-
 const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
 
+// ✅ Initialize Firebase Admin
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+  console.log("✅ Firebase Admin initialized successfully.");
+}
 
 const db = admin.firestore();
 const fcm = admin.messaging();
 
-// 🔔 Send FCM notification
-async function sendNotification(token, title, body) {
+// 🔔 Helper: Send notification
+async function sendNotification(token, title, body, userName) {
   try {
     await fcm.send({
       token,
       notification: { title, body },
+      webpush: {
+    fcmOptions: {
+      link: "https://todotab-4794a.web.app/", // 👈 this makes it clickable
+    },
+  },
     });
-    console.log(`✅ Notification sent to token: ${token}`);
-  } catch (error) {
-    console.error("❌ Error sending FCM:", error.message);
+    console.log(`✅ Sent to ${userName}: ${body}`);
+  } catch (err) {
+    console.error(`❌ FCM send failed for ${userName}: ${err.message}`);
   }
 }
 
-// 🧠 Main reminder check
-async function checkTasks() {
-  console.log("⏰ Checking tasks for reminders...");
+// 🧠 Main function: check due tasks & send reminders
+async function checkAndNotifyTasks() {
+  console.log("⏰ Checking tasks due soon and sending notifications...\n");
 
   try {
-    // 🔹 Emails to target (you can add or remove any)
-const targetEmails = ["poornima20suresh@gmail.com", "poornimasuresh18@gmail.com"];
-
-// 🔹 Fetch only those users whose email is in the target list
-const usersSnap = await db.collection("users")
-  .where("email", "in", targetEmails)
-  .get();
-
+    const usersSnap = await db.collection("users").get();
     if (usersSnap.empty) {
-      console.log("⚠️ No users found in Firestore.");
+      console.log("⚠️ No users found.");
       return;
     }
 
     const now = new Date();
+    let totalReminders = 0;
 
-    // 🔹 Loop through each user document
+    // Loop over all users
     for (const userDoc of usersSnap.docs) {
+      const userId = userDoc.id;
       const userData = userDoc.data();
-      const userEmail = userData.email || "(no email)";
-      console.log(`👤 Checking user: ${userEmail}`);
+      const displayName = userData.displayName || "(unknown)";
+      console.log(`👤 Checking user: ${displayName} (${userId})`);
 
-      // Find user tasks under /users/{uid}/tasks
-      const tasksRef = db.collection("users").doc(userDoc.id).collection("tasks");
-      const tasksSnap = await tasksRef.get();
-
-      if (tasksSnap.empty) {
-        console.log(`⚠️ No tasks found for ${userEmail}`);
+      // Fetch tasks
+      const taskDoc = await db.collection("tasks").doc(userId).get();
+      if (!taskDoc.exists) {
+        console.log("  → No task document found.\n");
         continue;
       }
 
-      for (const taskDoc of tasksSnap.docs) {
-        const task = taskDoc.data();
+      const taskData = taskDoc.data();
+      const tasks = taskData.list || [];
 
-        if (!task.dueDate || !task.fcmToken) continue;
-
-        const dueDate = parseISO(task.dueDate);
-        const minsLeft = differenceInMinutes(dueDate, now);
-
-        // 🔔 Notify if due within 60 mins and not already sent
-        if (minsLeft <= 60 && minsLeft > 0 && !task.reminderSent) {
-          console.log(`🔔 ${userEmail}: Task "${task.title}" due in ${minsLeft} mins.`);
-
-          await sendNotification(
-            task.fcmToken,
-            "⏰ Task Reminder",
-            `Your task "${task.title}" is due soon!`
-          );
-
-          await tasksRef.doc(taskDoc.id).update({ reminderSent: true });
-        }
+      if (!Array.isArray(tasks) || tasks.length === 0) {
+        console.log("  → No tasks found.\n");
+        continue;
       }
+
+      // Fetch FCM tokens under /users/{uid}/devices
+      const devicesSnap = await db.collection("users").doc(userId).collection("devices").get();
+      const tokens = [];
+
+      devicesSnap.forEach((doc) => {
+        const data = doc.data();
+        if (data?.token && !tokens.includes(data.token)) {
+          tokens.push(data.token);
+        }
+      });
+
+      if (tokens.length === 0) {
+        console.log("  → No FCM tokens found.\n");
+        continue;
+      }
+
+      console.log(`  → Found ${tokens.length} device token(s).`);
+
+      // Loop through each task
+      for (const task of tasks) {
+        if (!task.dueDate || task.completed) continue;
+
+        const due = parseISO(task.dueDate);
+        const minsLeft = differenceInMinutes(due, now);
+
+        const remindTimes = [30, 15]; // minutes before due time
+        for (const rt of remindTimes) {
+            if (minsLeft === rt && !(task.reminders?.[`${rt}min`] ?? false)) {
+              const title = "⏰ Task Reminder";
+              const body = `Your task "${task.text}" is due in ${minsLeft} minutes.`;
+
+              console.log(`   🔔 ${displayName} — "${task.text}" (${minsLeft} mins left)`);
+
+              for (const token of tokens) {
+                await sendNotification(token, title, body, displayName);
+                totalReminders++;
+              }
+
+              // ✅ Mark this reminder as sent
+              if (!task.reminders) task.reminders = {};
+              task.reminders[`${rt}min`] = true;
+            }
+          }
+      }
+      // After processing all tasks, update Firestore
+      await db.collection("tasks").doc(userId).set({ list: tasks }, { merge: true });
+      console.log(""); // spacing
     }
 
-    console.log("✅ All user tasks checked successfully.");
+    console.log(`✅ Done! Total reminders sent: ${totalReminders}\n`);
   } catch (err) {
     console.error("❌ Error checking tasks:", err);
   }
 }
 
-// Run once immediately (Render will trigger it via cron)
-checkTasks().then(() => process.exit());
+// 🚀 Run
+checkAndNotifyTasks().then(() => process.exit());
+
+
+
