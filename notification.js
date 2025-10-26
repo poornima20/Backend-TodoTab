@@ -5,7 +5,9 @@
 
 import { parseISO, differenceInMinutes } from "date-fns";
 import admin from "firebase-admin";
-const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
+const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT); // for GitHub Actions
+//import serviceAccount from "./service-account.json" with { type: "json" };  
+
 
 
 // ✅ Initialize Firebase Admin
@@ -54,24 +56,40 @@ async function checkAndNotifyTasks() {
     // Loop over all users
     for (const userDoc of usersSnap.docs) {
       const userId = userDoc.id;
-      const userData = userDoc.data();
-      const displayName = userData.displayName || "(unknown)";
-      console.log(`👤 Checking user: ${displayName} (${userId})`);
+const userData = userDoc.data();
+const displayName = userData.displayName || "(unknown)";
+console.log(`👤 Checking user: ${displayName} (${userId})`);
 
-      // Fetch tasks
-      const taskDoc = await db.collection("tasks").doc(userId).get();
-      if (!taskDoc.exists) {
-        console.log("  → No task document found.\n");
-        continue;
-      }
+// 🔹 Try fetching tasks from /tasks/{uid}
+const taskDoc = await db.collection("tasks").doc(userId).get();
 
-      const taskData = taskDoc.data();
-      const tasks = taskData.list || [];
+let tasks = [];
+if (taskDoc.exists) {
+  const taskData = taskDoc.data();
+  if (Array.isArray(taskData.list)) {
+    tasks = taskData.list;
+    console.log(`  🧮 Found ${tasks.length} tasks in /tasks/${userId}.`);
+  } else {
+    console.log(`  ⚠️ No valid 'list' array found in /tasks/${userId}`);
+  }
+} else {
+  console.log(`  🚫 No /tasks/${userId} document found.`);
+}
 
-      if (!Array.isArray(tasks) || tasks.length === 0) {
-        console.log("  → No tasks found.\n");
-        continue;
-      }
+// 🧩 Fallback: If nothing found, check if data is under /users/{uid}/tasks
+if (tasks.length === 0) {
+  const userTasksSnap = await db.collection("users").doc(userId).collection("tasks").get();
+  if (!userTasksSnap.empty) {
+    tasks = userTasksSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    console.log(`  🔄 Found ${tasks.length} tasks in /users/${userId}/tasks`);
+  }
+}
+
+// ✅ Continue only if we have tasks
+if (tasks.length === 0) {
+  console.log("  → No tasks found for this user.\n");
+  continue;
+}
 
       // Fetch FCM tokens under /users/{uid}/devices
       const devicesSnap = await db.collection("users").doc(userId).collection("devices").get();
@@ -92,31 +110,51 @@ async function checkAndNotifyTasks() {
       console.log(`  → Found ${tokens.length} device token(s).`);
 
       // Loop through each task
-      for (const task of tasks) {
-        if (!task.dueDate || task.completed) continue;
+     // Loop through each task
+for (const task of tasks) {
+  console.log(`   🧾 Task: "${task.text}"`);
+  
+  if (!task.dueDate) {
+    console.log("     ⚠️ No due date set — skipping.\n");
+    continue;
+  }
 
-        const due = parseISO(task.dueDate);
-        const minsLeft = differenceInMinutes(due, now);
+  if (task.completed) {
+    console.log("     ✅ Task completed — skipping.\n");
+    continue;
+  }
 
-        const remindTimes = [30, 15]; // minutes before due time
-        for (const rt of remindTimes) {
-            if (minsLeft === rt && !(task.reminders?.[`${rt}min`] ?? false)) {
-              const title = "⏰ Task Reminder";
-              const body = `Your task "${task.text}" is due in ${minsLeft} minutes.`;
+  const due = parseISO(task.dueDate);
+  const minsLeft = differenceInMinutes(due, now);
 
-              console.log(`   🔔 ${displayName} — "${task.text}" (${minsLeft} mins left)`);
+  console.log(`     📅 Due Date: ${task.dueDate} (in ${minsLeft} minutes)`);
 
-              for (const token of tokens) {
-                await sendNotification(token, title, body, displayName);
-                totalReminders++;
-              }
+const remindTimes = [30, 15, 5]; // reminder intervals in minutes
 
-              // ✅ Mark this reminder as sent
-              if (!task.reminders) task.reminders = {};
-              task.reminders[`${rt}min`] = true;
-            }
-          }
-      }
+for (const rt of remindTimes) {
+  // 🔹 Allow a small range instead of exact match
+  // e.g. 25–30 mins or 10–15 mins before due
+ if (minsLeft <= rt && minsLeft > rt - 5 && !(task.reminders?.[`${rt}min`] ?? false)) {
+    const title = "⏰ Task Reminder";
+    const body = `Your task "${task.text}" is due in ${minsLeft} minutes.`;
+
+    console.log(`   🔔 ${displayName} — "${task.text}" is due in ${minsLeft} mins (triggered ${rt}-min reminder)`);
+
+    for (const token of tokens) {
+      await sendNotification(token, title, body, displayName);
+      totalReminders++;
+    }
+
+    // ✅ Mark this reminder as sent so it’s not repeated
+    if (!task.reminders) task.reminders = {};
+    task.reminders[`${rt}min`] = true;
+  }
+}
+
+
+  console.log(""); // spacing for clarity
+}
+
       // After processing all tasks, update Firestore
       await db.collection("tasks").doc(userId).set({ list: tasks }, { merge: true });
       console.log(""); // spacing
