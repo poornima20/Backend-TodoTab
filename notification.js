@@ -1,5 +1,5 @@
 // ============================================================================
-// 🔹 notification.js
+// 🔹 Notification.js
 // Sends notifications using tokens from /users/{uid}/devices/{deviceId}/token
 // ============================================================================
 
@@ -41,55 +41,53 @@ async function sendNotification(token, title, body, userName) {
 
 // 🧠 Main function: check due tasks & send reminders
 async function checkAndNotifyTasks() {
-  console.log("⏰ Checking tasks due soon and sending notifications...\n");
+  console.log("⏰ Notification Summary\n");
 
   try {
-    const usersSnap = await db.collection("users").get();
-    if (usersSnap.empty) {
-      console.log("⚠️ No users found.");
-      return;
-    }
+      const usersSnap = await db.collection("users").get();
+      if (usersSnap.empty) { console.log("⚠️ No users found."); return; }
 
-    const now = new Date();
-    let totalReminders = 0;
+      const now = new Date();
+      let totalReminders = 0;
 
-    // Loop over all users
-    for (const userDoc of usersSnap.docs) {
+      // Loop over all users
+      for (const userDoc of usersSnap.docs) {
       const userId = userDoc.id;
-const userData = userDoc.data();
-const displayName = userData.displayName || "(unknown)";
-console.log(`👤 Checking user: ${displayName} (${userId})`);
+      const userData = userDoc.data();
+      const displayName = userData.displayName || "(unknown)";
+      console.log(`👤 Checking user: ${displayName}`);
 
-// 🔹 Try fetching tasks from /tasks/{uid}
-const taskDoc = await db.collection("tasks").doc(userId).get();
+      // 🔹 Try fetching tasks from /tasks/{uid}
+      const taskDoc = await db.collection("tasks").doc(userId).get();
 
-let tasks = [];
-if (taskDoc.exists) {
-  const taskData = taskDoc.data();
-  if (Array.isArray(taskData.list)) {
-    tasks = taskData.list;
-    console.log(`  🧮 Found ${tasks.length} tasks in /tasks/${userId}.`);
-  } else {
-    console.log(`  ⚠️ No valid 'list' array found in /tasks/${userId}`);
-  }
-} else {
-  console.log(`  🚫 No /tasks/${userId} document found.`);
-}
+      let tasks = [];
+      if (taskDoc.exists) {
+        const taskData = taskDoc.data();
+        if (Array.isArray(taskData.list)) {
+           tasks = taskData.list;
+           console.log(`  🧮 Found ${tasks.length} tasks .`);
+        } else {
+        console.log(`  ⚠️ No valid 'list' array found in /tasks/${userId}`);
+        }
+      } 
+      else {
+        console.log(`  🚫 No /tasks/${userId} document found.`);
+      }
 
-// 🧩 Fallback: If nothing found, check if data is under /users/{uid}/tasks
-if (tasks.length === 0) {
-  const userTasksSnap = await db.collection("users").doc(userId).collection("tasks").get();
-  if (!userTasksSnap.empty) {
-    tasks = userTasksSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    console.log(`  🔄 Found ${tasks.length} tasks in /users/${userId}/tasks`);
-  }
-}
+      // 🧩 Fallback: If nothing found, check if data is under /users/{uid}/tasks
+      if (tasks.length === 0) {
+        const userTasksSnap = await db.collection("users").doc(userId).collection("tasks").get();
+        if (!userTasksSnap.empty) {
+        tasks = userTasksSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          console.log(`  🔄 Found ${tasks.length} tasks in /users/${userId}/tasks`);
+        }
+      }
 
 // ✅ Continue only if we have tasks
-if (tasks.length === 0) {
-  console.log("  → No tasks found for this user.\n");
-  continue;
-}
+      if (tasks.length === 0) {
+        console.log("  → No tasks found for this user.\n");
+         continue;
+        }
 
       // Fetch FCM tokens under /users/{uid}/devices
       const devicesSnap = await db.collection("users").doc(userId).collection("devices").get();
@@ -109,46 +107,37 @@ if (tasks.length === 0) {
 
       console.log(`  → Found ${tokens.length} device token(s).`);
 
+
       // Loop through each task
-     // Loop through each task
-for (const task of tasks) {
-  console.log(`   🧾 Task: "${task.text}"`);
+      for (const task of tasks) {
+      process.stdout.write(`   🧾 Task: "${task.text}"`);
   
-  if (!task.dueDate) {
-    console.log("     ⚠️ No due date set — skipping.\n");
-    continue;
-  }
+      if (!task.dueDate) { console.log(" ⚠️ No due date set");  continue;  }
+        if (task.completed) {  console.log(" ✅ Task completed");  continue;  }
 
-  if (task.completed) {
-    console.log("     ✅ Task completed — skipping.\n");
-    continue;
-  }
+      const due = parseISO(task.dueDate);
+      const minsLeft = differenceInMinutes(due, now);
+      console.log(`\n 📅 Due Date: ${task.dueDate} (in ${minsLeft} minutes)`);
 
-  const due = parseISO(task.dueDate);
-  const minsLeft = differenceInMinutes(due, now);
+      const remindTimes = [15]; // reminder intervals in minutes
 
-  console.log(`     📅 Due Date: ${task.dueDate} (in ${minsLeft} minutes)`);
+      for (const rt of remindTimes) {
+      // 🔹 Allow a small range instead of exact match
+      // e.g. 25–30 mins or 10–15 mins before due
+      if (minsLeft <= rt && minsLeft > rt - 15 && !(task.reminders?.[`${rt}min`] ?? false)) {
+      const title = "⏰ Task Reminder";
+      const body = `Your task "${task.text}" is due in ${minsLeft} minutes.`;
+      console.log(`   🔔 ${displayName} — "${task.text}" is due in ${minsLeft} mins (triggered ${rt}-min reminder)`);
 
-const remindTimes = [30, 15, 5]; // reminder intervals in minutes
+      for (const token of tokens) {
+         await sendNotification(token, title, body, displayName);
+        totalReminders++;
+      }
 
-for (const rt of remindTimes) {
-  // 🔹 Allow a small range instead of exact match
-  // e.g. 25–30 mins or 10–15 mins before due
- if (minsLeft <= rt && minsLeft > rt - 5 && !(task.reminders?.[`${rt}min`] ?? false)) {
-    const title = "⏰ Task Reminder";
-    const body = `Your task "${task.text}" is due in ${minsLeft} minutes.`;
-
-    console.log(`   🔔 ${displayName} — "${task.text}" is due in ${minsLeft} mins (triggered ${rt}-min reminder)`);
-
-    for (const token of tokens) {
-      await sendNotification(token, title, body, displayName);
-      totalReminders++;
-    }
-
-    // ✅ Mark this reminder as sent so it’s not repeated
-    if (!task.reminders) task.reminders = {};
-    task.reminders[`${rt}min`] = true;
-  }
+      // ✅ Mark this reminder as sent so it’s not repeated
+      if (!task.reminders) task.reminders = {};
+       task.reminders[`${rt}min`] = true;
+      }
 }
 
 
@@ -160,10 +149,12 @@ for (const rt of remindTimes) {
       console.log(""); // spacing
     }
 
-    console.log(`✅ Done! Total reminders sent: ${totalReminders}\n`);
+   console.log(`✅ Done! Total reminders sent: ${totalReminders}\n`);
   } catch (err) {
     console.error("❌ Error checking tasks:", err);
   }
+
+
 }
 
 // 🚀 Run
