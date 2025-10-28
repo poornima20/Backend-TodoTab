@@ -117,7 +117,14 @@ async function checkAndNotifyTasks() {
 
       const due = parseISO(task.dueDate);
       const minsLeft = differenceInMinutes(due, now);
-      console.log(`\n 📅 Due Date: ${task.dueDate} (in ${minsLeft} minutes)`);
+      const formattedDate = new Date(task.dueDate).toLocaleString('en-US', {
+      month: 'short',       // "Oct"
+      day: 'numeric',       // "28"
+      hour: 'numeric',      // "2"
+      minute: '2-digit',    // "30"
+      hour12: true          // "PM"
+    });
+      console.log(`\n 📅 Due Date: ${formattedDate} (in ${minsLeft} minutes)`);
 
       const remindTimes = [15]; // reminder intervals in minutes
 
