@@ -130,35 +130,42 @@ async function checkAndNotifyTasks() {
 
       const remindTimes = [15]; // reminder intervals in minutes
 
-      for (const rt of remindTimes) {
-      // 🔹 Allow a small range instead of exact match
-      if (minsLeft <= rt && minsLeft > rt - 15 && !(task.reminders?.[`${rt}min`] ?? false)) {
-      const title = "⏰ Task Reminder";
-      const body = `Your task "${task.text}" is due in ${minsLeft} minutes.`;
-      console.log(`   🔔 ${displayName} — "${task.text}" is due in ${minsLeft} mins (triggered ${rt}-min reminder)`);
+for (const rt of remindTimes) {
+  const reminderKey = `${rt}min`;
 
-      for (const token of tokens) {
-         await sendNotification(token, title, body, displayName);
-        totalReminders++;
-      }
+  // Skip reminders already handled (sent or missed or skipped)
+  const prevStatus = task.reminders?.[reminderKey]?.status || task.reminders?.[reminderKey];
+  if (prevStatus === "sent" || prevStatus === "missed" || prevStatus === "skipped-completed" || prevStatus === true) {
+    continue;
+  }
 
-      // ✅ Mark this reminder as sent so it’s not repeated
-      if (!task.reminders) task.reminders = {};
-       task.reminders[`${rt}min`] = true;
-      }
+  // Ignore tasks very old (e.g. >1 day overdue)
+  if (minsLeft < -1440) continue; 
 
-      else if(!(task.reminders?.[`${rt}min`] ?? false) && minsLeft <= rt - 15) {
-    // Avoid sending missed notifications for tasks that were completed since last run
+  // 🔹 Regular upcoming reminder (within window)
+  if (minsLeft <= rt && minsLeft > rt - 15) {
+    const title = "⏰ Task Reminder";
+    const body = `Your task "${task.text}" is due in ${minsLeft} minutes.`;
+    console.log(`   🔔 ${displayName} — "${task.text}" is due in ${minsLeft} mins (triggered ${rt}-min reminder)`);
+
+    for (const token of tokens) {
+      await sendNotification(token, title, body, displayName);
+      totalReminders++;
+    }
+
+    if (!task.reminders) task.reminders = {};
+    task.reminders[reminderKey] = { status: "sent", at: new Date().toISOString() };
+  }
+
+  // 🔹 Missed reminder (if not sent earlier)
+  else if (minsLeft <= rt - 15) {
     if (task.completed) {
-      // Optionally mark as skipped so we don't try again
       if (!task.reminders) task.reminders = {};
-      task.reminders[`${rt}min`] = { status: "skipped-completed", at: new Date().toISOString() };
+      task.reminders[reminderKey] = { status: "skipped-completed", at: new Date().toISOString() };
       continue;
     }
 
-    // Compose a different "missed" message
     const title = "⚠️ Missed Task Reminder";
-    // If minsLeft is negative, the task is already overdue — show how many minutes ago.
     const minutesAgo = Math.abs(minsLeft);
     const whenText = minsLeft < 0 ? `${minutesAgo} minute(s) ago` : `within the last ${rt} minutes`;
     const body = `You missed a reminder for "${task.text}". It was due ${whenText}.`;
@@ -170,11 +177,11 @@ async function checkAndNotifyTasks() {
       totalReminders++;
     }
 
-    // Mark as missed so it won't be re-sent
     if (!task.reminders) task.reminders = {};
-    task.reminders[`${rt}min`] = { status: "missed", at: new Date().toISOString() };
+    task.reminders[reminderKey] = { status: "missed", at: new Date().toISOString() };
   }
 }
+
 
 
   console.log(""); // spacing for clarity
