@@ -1,13 +1,19 @@
 name: Send FCM Notifications
 
+# 🚫 Prevent duplicate and auto-retriggered runs
+concurrency:
+  group: notification-run
+  cancel-in-progress: true
+
 on:
   schedule:
-    - cron: "*/15 * * * *"   # every 15 minutes
-  workflow_dispatch:          # allow manual trigger too
+    - cron: "*/15 * * * *"   # Every 15 minutes
+  workflow_dispatch:          # Manual trigger
 
 jobs:
   run-notifications:
     runs-on: ubuntu-latest
+    timeout-minutes: 3        # ⏱ Stop auto retries after 60 min
 
     steps:
       - name: Checkout repository
