@@ -1,5 +1,5 @@
 // ============================================================================
-// 🔹 Notification.js (Optimized Version)
+// 🔹 Notification.js (Optimized + reset-on-due-change)
 // Sends due task notifications using tokens stored in Firestore
 // ============================================================================
 
@@ -118,18 +118,25 @@ async function checkAndNotifyTasks() {
         const rt = 15; // 15-minute reminder window
         const reminderKey = `${rt}min`;
 
-        // --- Simplified reminder reset logic ---
+        // --- Reset when due date changes (per-task) ---
         if (!task.reminders) task.reminders = {};
 
+        // normalize current due date to ISO for stable comparison
         const currentDue = due.toISOString();
-        const prev = task.reminders[reminderKey];
 
-        // Reset only if previous reminder was for a different due date
-        if (prev?.forDueDate && prev.forDueDate !== currentDue) {
-          task.reminders[reminderKey] = {};
+        // If the task has a lastDueDate and it's different from currentDue,
+        // that means the due date changed since the last run => reset reminders.
+        if (task.lastDueDate && task.lastDueDate !== currentDue) {
+          console.log("     🔁 Due date changed since last run — resetting reminders");
+          task.reminders = {};
         }
 
-        const prevStatus = task.reminders[reminderKey]?.status || null;
+        // Always update lastDueDate to the current one so it persists
+        task.lastDueDate = currentDue;
+
+        const prev = task.reminders[reminderKey];
+
+        const prevStatus = prev?.status || null;
 
         // Skip if already handled for this due date
         if (["sent", "missed", "skipped-completed"].includes(prevStatus)) {
@@ -157,7 +164,6 @@ async function checkAndNotifyTasks() {
           task.reminders[reminderKey] = {
             status: "sent",
             at: new Date().toISOString(),
-            forDueDate: currentDue,
           };
         }
 
@@ -169,7 +175,6 @@ async function checkAndNotifyTasks() {
             task.reminders[reminderKey] = {
               status: "skipped-completed",
               at: new Date().toISOString(),
-              forDueDate: currentDue,
             };
             continue;
           }
@@ -188,12 +193,11 @@ async function checkAndNotifyTasks() {
           task.reminders[reminderKey] = {
             status: "missed",
             at: new Date().toISOString(),
-            forDueDate: currentDue,
           };
         }
       }
 
-      // Save updated tasks
+      // Save updated tasks (includes lastDueDate and reminders)
       await db.collection("tasks").doc(userId).set({ list: tasks }, { merge: true });
       console.log("");
     }
@@ -205,4 +209,4 @@ async function checkAndNotifyTasks() {
 }
 
 // 🚀 Run
-checkAndNotifyTasks().then(() => process.exit());
+checkAndNotifyTasks().then(() => process.exit(0));
