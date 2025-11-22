@@ -1,26 +1,25 @@
 // ============================================================================
-// 🔹 Notification.js
-// Sends notifications using tokens from /users/{uid}/devices/{deviceId}/token
+// 🔹 Notification.js (Optimized Version)
+// Sends due task notifications using tokens stored in Firestore
 // ============================================================================
 
 import { parseISO, differenceInMinutes } from "date-fns";
 import admin from "firebase-admin";
 
-const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT); // for GitHub Actions
-// import serviceAccount from "./service-account.json" with { type: "json" };
+const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 
-// ✅ Initialize Firebase Admin
+// 🔥 Initialize Firebase Admin once
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
   });
-  console.log("✅ Firebase Admin initialized successfully.");
+  console.log("✅ Firebase Admin initialized");
 }
 
 const db = admin.firestore();
 const fcm = admin.messaging();
 
-// 🔔 Helper: Send notification
+// 🔔 Helper to send a push notification
 async function sendNotification(token, title, body, userName) {
   try {
     await fcm.send({
@@ -28,19 +27,21 @@ async function sendNotification(token, title, body, userName) {
       notification: { title, body },
       webpush: {
         fcmOptions: {
-          link: "https://todotab-4794a.web.app/", // 👈 clickable link
+          link: "https://todotab-4794a.web.app/",
         },
       },
     });
-    console.log(`✅ Sent to ${userName}: ${body}`);
+    console.log(`   📩 Sent → ${userName}: ${body}`);
   } catch (err) {
-    console.error(`❌ FCM send failed for ${userName}: ${err.message}`);
+    console.error(`   ❌ Failed for ${userName}: ${err.message}`);
   }
 }
 
-// 🧠 Main function: check due tasks & send reminders
+// ============================================================================
+// 🧠 MAIN CHECK & NOTIFICATION FUNCTION
+// ============================================================================
 async function checkAndNotifyTasks() {
-  console.log("⏰ Notification Summary\n");
+  console.log("\n⏰ Notification Summary\n");
 
   try {
     const usersSnap = await db.collection("users").get();
@@ -49,79 +50,59 @@ async function checkAndNotifyTasks() {
       return;
     }
 
-    const now = new Date();
     let totalReminders = 0;
+    const now = new Date();
 
-    // Loop through all users
+    // Loop through users
     for (const userDoc of usersSnap.docs) {
       const userId = userDoc.id;
-      const userData = userDoc.data();
-      const displayName = userData.displayName || "(unknown)";
-      console.log(`👤 Checking user: ${displayName}`);
+      const displayName = userDoc.data().displayName || "(unknown)";
+      console.log(`👤 Checking: ${displayName}`);
 
-      // 🔹 Try fetching tasks from /tasks/{uid}
-      const taskDoc = await db.collection("tasks").doc(userId).get();
+      // Fetch tasks (two possible locations)
       let tasks = [];
 
-      if (taskDoc.exists) {
-        const taskData = taskDoc.data();
-        if (Array.isArray(taskData.list)) {
-          tasks = taskData.list;
-          console.log(`  🧮 Found ${tasks.length} tasks.`);
-        } else {
-          console.log(`  ⚠️ No valid 'list' array found in /tasks/${userId}`);
-        }
+      const taskDoc = await db.collection("tasks").doc(userId).get();
+      if (taskDoc.exists && Array.isArray(taskDoc.data().list)) {
+        tasks = taskDoc.data().list;
       } else {
-        console.log(`  🚫 No /tasks/${userId} document found.`);
-      }
-
-      // 🧩 Fallback: If nothing found, check under /users/{uid}/tasks
-      if (tasks.length === 0) {
         const userTasksSnap = await db.collection("users").doc(userId).collection("tasks").get();
-        if (!userTasksSnap.empty) {
-          tasks = userTasksSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          console.log(`  🔄 Found ${tasks.length} tasks in /users/${userId}/tasks`);
-        }
+        tasks = userTasksSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       }
 
       if (tasks.length === 0) {
-        console.log("  → No tasks found for this user.\n");
+        console.log("   → No tasks.\n");
         continue;
       }
 
-      // 🔹 Fetch FCM tokens
-      const devicesSnap = await db.collection("users").doc(userId).collection("devices").get();
-      const tokens = [];
-
-      devicesSnap.forEach(doc => {
-        const data = doc.data();
-        if (data?.token && !tokens.includes(data.token)) tokens.push(data.token);
-      });
+      // Fetch device tokens
+      const devices = await db.collection("users").doc(userId).collection("devices").get();
+      const tokens = devices.docs
+        .map(d => d.data().token)
+        .filter(Boolean);
 
       if (tokens.length === 0) {
-        console.log("  → No FCM tokens found.\n");
+        console.log("   → No device tokens.\n");
         continue;
       }
 
-      console.log(`  → Found ${tokens.length} device token(s).`);
-
-      // 🔁 Loop through each task
+      // Process each task
       for (const task of tasks) {
-        process.stdout.write(`   🧾 Task: "${task.text}"`);
+        console.log(`\n   🧾 Task: "${task.text}"`);
 
         if (!task.dueDate) {
-          console.log(" ⚠️ No due date set");
+          console.log("     ⚠️ No due date");
           continue;
         }
         if (task.completed) {
-          console.log(" ✅ Task completed");
+          console.log("     ✔️ Completed");
           continue;
         }
 
         const due = parseISO(task.dueDate);
         const minsLeft = differenceInMinutes(due, now);
 
-        const formattedDate = new Date(task.dueDate).toLocaleString("en-IN", {
+        const formatted = new Date(task.dueDate).toLocaleString("en-IN", {
           timeZone: "Asia/Kolkata",
           month: "short",
           day: "numeric",
@@ -131,76 +112,95 @@ async function checkAndNotifyTasks() {
           hour12: true,
         });
 
-        console.log(`\n 📅 Due Date: ${formattedDate} (in ${minsLeft} minutes)`);
+        console.log(`     📅 Due: ${formatted} (in ${minsLeft} min)`);
 
-        const rt = 15; // single reminder interval
+        // Reminder settings
+        const rt = 15; // 15-minute reminder window
         const reminderKey = `${rt}min`;
 
+        // --- Simplified reminder reset logic ---
         if (!task.reminders) task.reminders = {};
 
-        // Get previous reminder status
+        const currentDue = due.toISOString();
         const prev = task.reminders[reminderKey];
-        const prevStatus = typeof prev === "object" ? prev.status : (prev ? "sent" : null);
 
-        // 🧠 Skip if already handled
+        // Reset only if previous reminder was for a different due date
+        if (prev?.forDueDate && prev.forDueDate !== currentDue) {
+          task.reminders[reminderKey] = {};
+        }
+
+        const prevStatus = task.reminders[reminderKey]?.status || null;
+
+        // Skip if already handled for this due date
         if (["sent", "missed", "skipped-completed"].includes(prevStatus)) {
-          console.log(`   ⏭️ Already handled (${prevStatus}) for "${task.text}"`);
+          console.log(`     ⏭️ Already handled (${prevStatus})`);
           continue;
         }
 
-        // Skip very old overdue tasks (>24h)
+        // Skip old overdue tasks
         if (minsLeft < -1440) continue;
 
-        // 🔹 Case 1: Regular 15-min reminder (within window)
+        // =====================================================================
+        // 🔔 15-Minute Reminder Window
+        // =====================================================================
         if (minsLeft <= rt && minsLeft > rt - 15) {
           const title = "⏰ Task Reminder";
           const body = `Your task "${task.text}" is due in ${minsLeft} minutes.`;
-          console.log(`   🔔 ${displayName} — ${body}`);
+
+          console.log(`     🔔 Sending reminder`);
 
           for (const token of tokens) {
             await sendNotification(token, title, body, displayName);
             totalReminders++;
           }
 
-          task.reminders[reminderKey] = { status: "sent", at: new Date().toISOString() };
+          task.reminders[reminderKey] = {
+            status: "sent",
+            at: new Date().toISOString(),
+            forDueDate: currentDue,
+          };
         }
 
-        // ⚠️ Case 2: Missed reminder (past due, never sent)
+        // =====================================================================
+        // ⚠️ Missed Reminder
+        // =====================================================================
         else if (minsLeft <= rt - 15) {
           if (task.completed) {
-            task.reminders[reminderKey] = { status: "skipped-completed", at: new Date().toISOString() };
+            task.reminders[reminderKey] = {
+              status: "skipped-completed",
+              at: new Date().toISOString(),
+              forDueDate: currentDue,
+            };
             continue;
           }
 
           const title = "⚠️ Missed Task Reminder";
           const minutesAgo = Math.abs(minsLeft);
-          const whenText = minsLeft < 0
-            ? `${minutesAgo} minute(s) ago`
-            : `within the last ${rt} minutes`;
-          const body = `You missed a reminder for "${task.text}". It was due ${whenText}.`;
+          const body = `You missed the reminder for "${task.text}". It was due ${minutesAgo} min ago.`;
 
-          console.log(`   ⚠️ ${displayName} — ${body}`);
+          console.log(`     ⚠️ Sending missed reminder`);
 
           for (const token of tokens) {
             await sendNotification(token, title, body, displayName);
             totalReminders++;
           }
 
-          // 🔒 Mark permanently as missed (never repeat)
-          task.reminders[reminderKey] = { status: "missed", at: new Date().toISOString() };
+          task.reminders[reminderKey] = {
+            status: "missed",
+            at: new Date().toISOString(),
+            forDueDate: currentDue,
+          };
         }
-
-        console.log(""); // spacing for clarity
       }
 
-      // ✅ Update Firestore after all tasks processed
+      // Save updated tasks
       await db.collection("tasks").doc(userId).set({ list: tasks }, { merge: true });
       console.log("");
     }
 
-    console.log(`✅ Done! Total reminders sent: ${totalReminders}\n`);
+    console.log(`\n🎉 Done! Total reminders sent: ${totalReminders}\n`);
   } catch (err) {
-    console.error("❌ Error checking tasks:", err);
+    console.error("❌ Error:", err);
   }
 }
 
