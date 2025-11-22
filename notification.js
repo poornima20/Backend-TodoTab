@@ -26,16 +26,30 @@ async function sendNotification(token, title, body, userName) {
       token,
       notification: { title, body },
       webpush: {
-        fcmOptions: {
-          link: "https://todotab-4794a.web.app/",
-        },
-      },
+        fcmOptions: { link: "https://todotab-4794a.web.app/" }
+      }
     });
     console.log(`   📩 Sent → ${userName}: ${body}`);
   } catch (err) {
     console.error(`   ❌ Failed for ${userName}: ${err.message}`);
+
+    // --- Auto-remove token if invalid ---
+    if (err.errorInfo?.code === "messaging/registration-token-not-registered") {
+      console.log("   🗑 Removing invalid FCM token:", token);
+
+      // Find and delete this token from devices collection
+      const devicesSnap = await db
+        .collection("users")
+        .doc(userName)
+        .collection("devices")
+        .where("token", "==", token)
+        .get();
+
+      devicesSnap.forEach(doc => doc.ref.delete());
+    }
   }
 }
+
 
 // ============================================================================
 // 🧠 MAIN CHECK & NOTIFICATION FUNCTION
