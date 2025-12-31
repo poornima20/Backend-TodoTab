@@ -280,4 +280,5 @@ async function sendHappyNewYear() {
 
 
 // 🚀 Run
-checkAndNotifyTasks().then(() => process.exit(0));
+sendHappyNewYear().then(() => process.exit(0));
+//checkAndNotifyTasks().then(() => process.exit(0));
