@@ -222,5 +222,62 @@ async function checkAndNotifyTasks() {
   }
 }
 
+// ============================================================================
+// 🎉 Happy New Year Broadcast (Manual Trigger)
+// ============================================================================
+
+async function sendHappyNewYear() {
+  console.log("\n🎆 Sending Happy New Year message to all users...\n");
+
+  try {
+    const usersSnap = await db.collection("users").get();
+    if (usersSnap.empty) {
+      console.log("⚠️ No users found.");
+      return;
+    }
+
+    let totalSent = 0;
+
+    const title = "🎉 Happy New Year 2026!";
+    const body =
+      "Wishing you a year full of focus, progress, and wins 🚀✨ Thank you for being part of TodoTab :)";
+
+    for (const userDoc of usersSnap.docs) {
+      const userId = userDoc.id;
+      const displayName = userDoc.data().displayName || "(unknown)";
+
+      console.log(`👤 Sending to: ${displayName}`);
+
+      // Fetch device tokens
+      const devicesSnap = await db
+        .collection("users")
+        .doc(userId)
+        .collection("devices")
+        .get();
+
+      const tokens = devicesSnap.docs
+        .map(d => d.data().token)
+        .filter(Boolean);
+
+      if (tokens.length === 0) {
+        console.log("   → No device tokens\n");
+        continue;
+      }
+
+      for (const token of tokens) {
+        await sendNotification(token, title, body, displayName);
+        totalSent++;
+      }
+
+      console.log("");
+    }
+
+    console.log(`🎊 Happy New Year message sent to ${totalSent} devices!\n`);
+  } catch (err) {
+    console.error("❌ Broadcast Error:", err);
+  }
+}
+
+
 // 🚀 Run
 checkAndNotifyTasks().then(() => process.exit(0));
